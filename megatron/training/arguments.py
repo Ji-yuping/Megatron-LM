@@ -1203,6 +1203,32 @@ def validate_args(args, defaults={}):
             args.recompute_granularity != 'full'
         ), 'recompute_granularity must not be full when CUDA Graphs are enabled.'
 
+    
+    ## 
+    if args.log_flops or args.log_peak_mem:
+        start = args.log_metrics_start_iter
+        end = args.log_metrics_end_iter
+        assert start is not None and end is not None, (
+                'When --log-flops or --log-peak-mem is set, '
+                '--log-metrics-start-iter and --log-metrics-end-iter '
+                'must both be specified.'
+            )
+
+        assert start >= -1, '--log_metrics_start_iter must be >= -1.'
+        assert start < end, (
+                '--log_metrics_start_iter must be strictly smaller than '
+                '--log_metrics_end_iter since logging range is (start, end].'
+            )
+        
+        assert end % args.log_interval == 0, '--log_metrics_end_iter must be divisible by log_interval.'
+
+        assert args.valid_iterations_during_logging == 0, (
+            '--valid-iterations-during-logging must be initialized to 0.'
+            )
+        assert args.valid_elapsed_time_during_logging == 0, (
+            '--valid-elapsed-time-during-logging must be initialized to 0.'
+            )
+
     # Print arguments.
     _print_args("arguments", args)
 
@@ -1804,6 +1830,27 @@ def _add_logging_args(parser):
                        help='If set, log progress (in terms of number of processed tokens and '
                        'number of floating-point operations) to progress.txt file in checkpoint '
                        'directory.')
+    
+
+    ##
+    group.add_argument('--log-flops', action='store_true', 
+                       help='If set, calculate and log TFLOPs/sec per GPU during the specified iteration range.')
+    group.add_argument('--log-peak-mem', action='store_true', 
+                       help='If set, calculate and log peak GPU memory allocation during the specified iteration range.')
+    group.add_argument('--log-metrics-start-iter', type=int, default=None, 
+                       help=('Iteration number immediately BEFORE metrics logging starts. '
+                             'Metrics will be collected starting from (start_iter + 1). '))
+    group.add_argument('--log-metrics-end-iter', type=int, default=None, 
+                       help=('Iteration number at which metrics logging ends (inclusive). '
+                             'Must be divisible by log-interval.'))
+    group.add_argument('--valid-iterations-during-logging', type=int, default=0, 
+                   help=('Number of valid iterations during metrics logging. '
+                         'Must be initialized to 0.'))
+    group.add_argument('--valid-elapsed-time-during-logging', type=int, default=0, 
+                    help=('Elapsed time during metrics logging. '
+                            'Must be initialized to 0.'))
+
+
     group.add_argument('--timing-log-level', type=int,
                        default=0, choices=range(0,3),
                        help='Granularity level to measure and report timing. '
@@ -3138,6 +3185,12 @@ def _add_moe_args(parser):
                        help='Number of SMs to use for DeepEP.')
     group.add_argument('--moe-permute-fusion', action='store_true',
                        help='Fuse token rearrangement ops during token dispatching.')
+    
+    ## 260207
+    group.add_argument('--moe-token-dispatcher-for-fp8', action='store_true', 
+                       help='Perform dispatch all-to-all in FP8.')
+
+
     # Token dropping arguments
     group.add_argument('--moe-expert-capacity-factor', type=float, default=None,
                        help='The capacity factor for each expert, None means no token will be dropped.')

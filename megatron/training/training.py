@@ -1577,7 +1577,13 @@ def training_log(
         elapsed_time = timers('interval-time').elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
 
-        throughput = num_floating_point_operations(args, batch_size) / (
+        # throughput = num_floating_point_operations(args, batch_size) / (
+        #     elapsed_time_per_iteration * 10**12 * args.world_size
+        # )
+
+        ##
+        flops = num_floating_point_operations(args, batch_size) 
+        throughput = flops / (
             elapsed_time_per_iteration * 10**12 * args.world_size
         )
 
@@ -1598,6 +1604,38 @@ def training_log(
         log_string += ' elapsed time per iteration (ms): {:.1f} |'.format(
             elapsed_time_per_iteration * 1000.0
         )
+
+
+        ## 260123 fix add: iteration > args.log_metrics_start_iter
+        if args.log_flops and iteration > args.log_metrics_start_iter:
+            args.valid_iterations_during_logging += total_iterations
+            args.valid_elapsed_time_during_logging += elapsed_time
+
+            if iteration == args.log_metrics_end_iter:
+                elapsed_log_time_per_iteration = args.valid_elapsed_time_during_logging / (
+                    args.valid_iterations_during_logging
+                )
+                flops_per_sec_per_gpu = flops / (
+                    elapsed_log_time_per_iteration * 10**12 * args.world_size
+                )
+                throughput_tokens = batch_size * args.seq_length / (
+                    elapsed_log_time_per_iteration * args.world_size
+                )
+                args.log_flops = False
+                args.valid_iterations_during_logging = 0
+                args.valid_elapsed_time_during_logging = 0
+                ## 260124 add: print FLOPs
+                print_rank_0(f">>> FLOPs: {flops:.1e}, Throughput (tokens/s/GPU): {throughput_tokens:.1f}, FLOPS (TFLOP/s/GPU): {flops_per_sec_per_gpu:.1f}.")
+                 
+        if args.log_peak_mem and iteration == args.log_metrics_end_iter:
+            peak_alloc = torch.cuda.max_memory_allocated() / 1024**3
+            peak_alloc_tensor = torch.tensor(peak_alloc, device=torch.device('cuda', torch.cuda.current_device()))
+            torch.distributed.all_reduce(peak_alloc_tensor, op=torch.distributed.ReduceOp.MAX)
+            
+            args.log_peak_mem = False
+            print_rank_0(f">>> Max allocated mem (GB): {peak_alloc_tensor.item():.2f}")
+
+
         if args.log_throughput:
             log_string += f' throughput per GPU (TFLOP/s/GPU): {throughput:.1f} |'
             if args.log_timers_to_tensorboard:
@@ -1663,6 +1701,20 @@ def training_log(
             timers.write(timers_to_log, wandb_writer, iteration, normalizer=args.log_interval, reset=False)
         # Log timers to stdout
         timers.log(timers_to_log, normalizer=args.log_interval)
+
+    ##
+    else:
+        if args.log_flops and iteration == args.log_metrics_start_iter:
+            _ = timers('interval-time').elapsed(barrier=True)
+            total_loss_dict[advanced_iters_key] = 0
+            total_loss_dict[skipped_iters_key] = 0
+            total_loss_dict[nan_iters_key] = 0
+            args.valid_iterations_during_logging = 0
+            args.valid_elapsed_time_during_logging = 0
+
+    if args.log_peak_mem and iteration == args.log_metrics_start_iter:
+        torch.cuda.reset_peak_memory_stats()
+
 
     return report_memory_flag
 

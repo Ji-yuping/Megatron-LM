@@ -1232,6 +1232,9 @@ class MoEFlexTokenDispatcher(MoETokenDispatcher):
         routing_map, probs = self._initialize_metadata(routing_map, probs)
 
         self._comm_manager.setup_metadata(routing_map, probs)
+
+        
+
         return hidden_states, self._comm_manager.token_probs
 
     def token_dispatch(
